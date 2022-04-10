@@ -1,0 +1,112 @@
+---
+title: "Web Scrapping"
+author: "Ryan Atkinson"
+date: "`r lubridate::today()`"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE, echo = FALSE, warning = FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r required libraries, echo = FALSE, warning = FALSE, message = FALSE}
+# install.packages(c("tidyverse", "tokenizers", "rvest", "tidytext))
+library(tidyverse)
+library(rvest)
+library(tidytext)
+library(knitr)
+library(kableExtra)
+```
+
+## This will briefly show how to do two forms of web scrapping
+
+$\vspace{.01cm}$
+
+The first type of web scrapping will pull and clean text from gutenberg, a repository of e-books.
+
+
+```{r read in html document, echo = FALSE, warning = FALSE}
+url <- read_html("https://gutenberg.org/files/1343/1343-h/1343-h.htm")
+text <- html_nodes(url, css = "h2 , p") %>% html_text()
+```
+
+```{r cleaning text & partitioning into words, echo = FALSE, warning = FALSE, message = FALSE}
+clean_trial <- text %>% 
+  str_replace_all(., "(\\s){1,}", " ") %>% # removing empty spaces
+  as_tibble() %>% # converting to tibble
+  mutate(index = row_number(), # creating index based on row_number, will be useful later
+         chapter = cumsum(str_detect(value, "^ CHAPTER"))) # creating index based on condition when matching string is TRUE in value column, using cumsum() to add when string is detected
+```
+
+```{r creating tokens/cleaning and removing stop_words, echo = FALSE, warning = FALSE, message = FALSE}
+# creating tokens -- individual words, set along with row number and chapter number that were created above
+tidy_bureau <- clean_trial %>% unnest_tokens(word, value) # take value, convert to word as individual token
+# removing stop words with an anti_join
+data(stop_words)
+tidy_no_stop <- tidy_bureau %>% anti_join(stop_words)
+```
+
+```{r getting sentiment counts from 3 different dictionaries, warning = FALSE, echo = FALSE, message = FALSE}
+        ### Sentiment Analysis
+
+# list of sentiment analysis dictionaries; for nrc, press 1 to accept terms
+afinn <- get_sentiments("afinn")
+bing <- get_sentiments("bing")
+nrc <- get_sentiments("nrc")
+
+# joining our clean dataset with each sentiment analysis dictionary
+tidy_afinn <- inner_join(tidy_no_stop, afinn)
+tidy_bing <- inner_join(tidy_no_stop, bing)
+tidy_nrc <- inner_join(tidy_no_stop, nrc)
+
+      # getting counts of top 10 words
+tidy_no_stop %>% group_by(chapter) %>% count(word, sort = TRUE) %>% head(10) %>% 
+                      kable(caption = "Top 10 Words",
+                            align = "c")
+      # getting top 10 words from afinn dictionary
+tidy_afinn %>% count(word, sort = TRUE) %>% head(10) %>% 
+  arrange(desc(n)) %>% kable(caption = "Top 10 Words from Afinn Dictionary", 
+                           col.names = c("Sentiment", "Number of Words"),
+                           align = "c")
+      # getting top 10 words from bing dictionary
+tidy_bing %>% count(word, sort = TRUE) %>% head(10) %>% 
+arrange(desc(n)) %>% kable(caption = "Top 10 Words from Bing Dictionary", 
+                           col.names = c("Sentiment", "Number of Words"),
+                           align = "c")
+      # getting top 10 words from nrc dictionary
+tidy_nrc %>% count(sentiment) %>% head(10) %>% 
+arrange(desc(n)) %>% kable(caption = "Top 10 Words from NRC Dictionary", 
+                           col.names = c("Sentiment", "Number of Words"),
+                           align = "c")
+```
+
+```{r plot with afinn sentiment dictionary, echo = FALSE, warning = FALSE, message = FALSE}
+# Trajectory of sentiment across chapters based on afinn sentiment dictionary
+tidy_afinn %>% group_by(chapter) %>% summarize(sum = sum(value)) %>% # getting sum of value per chapter
+  mutate(sentiment = ifelse(sum > 0, "POSITVE", "NEGATIVE")) %>% # creating new column to use as color based on pos/neg sentiment
+  ggplot(aes(x = chapter, y = sum, fill = sentiment)) +
+  geom_col() +
+  labs(title = "Net Sentiment Per Chapter") +
+  xlab("Chapter") +
+  ylab("Net Sentiment") +
+  theme_minimal()
+```
+
+```{r plot of negative/positive words, echo = FALSE, warning = FALSE}
+# Contribution of the sentiment of a word (negative/positive) to the whole text
+tidy_count <- tidy_bing %>% group_by(sentiment) %>% count(word, sentiment, sort = TRUE)
+
+tidy_count %>% 
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(title = "Top ten positive/negative sentiment words") +
+  xlab("Word contribution to sentiment")
+```
+
